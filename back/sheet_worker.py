@@ -6,7 +6,7 @@ from openpyxl.utils import get_column_letter
 
 from utils.config import DEFAULT_ROWS, DEFAULT_COLS
 
-class SheetManager:
+class SheetWorker:
     def __init__(self, tab_widget: QTabWidget, main_window):
         self.tab_widget = tab_widget
         self.main_window = main_window
