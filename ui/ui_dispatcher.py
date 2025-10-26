@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QToolBar, QStyle, QMenu, QPushButton
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt
 
-class UIManager:
+class UIRenderer:
     def __init__(self, main_window):
         self.window = main_window
         self.actions = {}
