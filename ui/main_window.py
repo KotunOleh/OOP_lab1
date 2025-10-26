@@ -303,7 +303,18 @@ class MainWindow(QMainWindow):
         self.ui_manager.set_action_enabled("show_formulas", is_file_open)
         self.add_sheet_button.setEnabled(is_file_open)
         
-        self.sheet_manager.set_edit_actions_enabled(is_file_open)
-        
+        self.ui_manager.set_action_enabled("add_row", is_file_open)
+        self.ui_manager.set_action_enabled("del_row", is_file_open)
+        self.ui_manager.set_action_enabled("add_col", is_file_open)
+        self.ui_manager.set_action_enabled("del_col", is_file_open)
+
+        # Keep other lines as they are
+        self.ui_manager.set_action_enabled("save", is_file_open)
+        self.ui_manager.set_action_enabled("show_formulas", is_file_open)
+        self.add_sheet_button.setEnabled(is_file_open)
+
+        google_logged_in = self.google_manager.service is not None
+        self.ui_manager.set_action_enabled("save_to_drive", is_file_open and google_logged_in)
+                
         google_logged_in = self.google_manager.service is not None
         self.ui_manager.set_action_enabled("save_to_drive", is_file_open and google_logged_in)
