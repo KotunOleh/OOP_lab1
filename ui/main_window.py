@@ -98,8 +98,32 @@ class MainWindow(QMainWindow):
         self.is_calculating = False 
         QTimer.singleShot(0, self.recalculate_all_cells)
 
-    def show_context_menu(self, position: QPoint):
-        self.sheet_manager.show_context_menu(position)
+    def show_context_menu(self, position: QPoint) -> None:
+        table_widget = self.sheet_manager.get_current_table() 
+        
+        if not table_widget or not self.ui_manager.get_action("save").isEnabled():
+            return
+            
+        context_menu = QMenu(self)
+        current_row = table_widget.currentRow()
+        current_col = table_widget.currentColumn()
+        
+        action_del_row = self.ui_manager.get_action("del_row")
+        action_del_col = self.ui_manager.get_action("del_col")
+        
+        if action_del_row:
+            action_del_row.setEnabled(current_row >= 0)
+        if action_del_col:
+            action_del_col.setEnabled(current_col >= 0)
+        
+        context_menu.addAction(self.ui_manager.get_action("add_row"))
+        context_menu.addAction(action_del_row)
+        context_menu.addSeparator()
+        context_menu.addAction(self.ui_manager.get_action("add_col"))
+        context_menu.addAction(action_del_col)
+        
+        global_pos = table_widget.mapToGlobal(position)
+        context_menu.exec(global_pos)
 
     def show_tab_context_menu(self, position: QPoint):
         self.sheet_manager.show_tab_context_menu(position)

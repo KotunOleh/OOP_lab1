@@ -152,3 +152,20 @@ class SheetWorker:
             sheet = workbook[sheet_name]
             table_widget = self.tab_widget.widget(idx)
             self.update_sheet_from_table(sheet, table_widget)
+
+    def populate_all_tabs(self, workbook) -> None:
+        self.clear_tabs()
+        
+        self.tab_widget.blockSignals(True)
+        try:
+            if not workbook.sheetnames:
+                self.add_sheet_tab("Sheet1")
+            else:
+                for sheet_name in workbook.sheetnames:
+                    sheet = workbook[sheet_name]
+                    self.add_sheet_tab(sheet_name, sheet)
+            
+            self.tab_widget.setCurrentIndex(0)
+        finally:
+            self.tab_widget.blockSignals(False)
+        self.main_window.recalculate_all_cells()
