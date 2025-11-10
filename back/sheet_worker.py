@@ -49,6 +49,29 @@ class SheetWorker:
         table_widget.itemChanged.connect(self.main_window.on_item_changed)
         table_widget.itemDoubleClicked.connect(self.main_window.on_item_double_clicked)
         return table_widget
+    
+    def add_new_sheet_action(self):
+        """
+        Створює новий аркуш, як у 'main_window.py'.
+        """
+        # Перевіряємо, чи є активна книга
+        if not self.main_window.current_workbook:
+            QMessageBox.warning(self.main_window, "Помилка", "Спочатку створіть або відкрийте файл.")
+            return
+
+        sheet_name, ok = QInputDialog.getText(self.main_window, "Новий аркуш", "Введіть ім'я аркуша:")
+        
+        if ok and sheet_name:
+            if sheet_name in self.main_window.current_workbook.sheetnames:
+                QMessageBox.warning(self.main_window, "Помилка", "Аркуш з таким іменем вже існує.")
+                return
+            
+            # Створюємо аркуш в openpyxl
+            new_sheet = self.main_window.current_workbook.create_sheet(title=sheet_name)
+            
+            # Створюємо та додаємо вкладку з порожньою таблицею
+            self.add_sheet_tab(sheet_name) 
+            self.main_window.set_dirty(True)
 
     def populate_table(self, table_widget: QTableWidget, sheet) -> None:
         table_widget.blockSignals(True)

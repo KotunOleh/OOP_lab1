@@ -47,7 +47,7 @@ class MainWindow(QMainWindow):
         # Init UI
         self.ui_manager.setup_toolbar()
         self.ui_manager.setup_context_menus()
-        self.add_sheet_button.clicked.connect(self.add_new_sheet_action)
+        self.add_sheet_button.clicked.connect(self._sheet_action)
 
         self.reset_app()
 
@@ -281,7 +281,7 @@ class MainWindow(QMainWindow):
                      self.set_dirty(False)
 
     # Sheets managing
-    def add_new_sheet_action(self):
+    def _sheet_action(self):
         self.sheet_manager.add_new_sheet_action()
 
     def delete_current_sheet_action(self):
