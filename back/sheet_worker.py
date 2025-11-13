@@ -181,6 +181,9 @@ class SheetWorker:
                         ast = calculator._get_ast(formula)
                         new_ast = self._transform_ast_on_delete(ast, dimension, deleted_index, calculator)
                         
+                        if not isinstance(new_ast, ErrorNode):
+                            new_ast = self._check_bounds_after_delete(new_ast, dimension, table, calculator)
+                        
                         if new_ast is ast:
                             continue
 
@@ -189,9 +192,52 @@ class SheetWorker:
                         
                         if self.main_window.is_formula_view:
                             item.setText(new_formula)
+                        else:
+                            item.setText("#REF!")
                             
                     except (ParsingError, ReferenceError, CircularReferenceError):
                         continue 
+    
+    def _check_bounds_after_delete(self, node: ASTNode, dim: str, table: QTableWidget, calc: FormulaCalculator) -> ASTNode:
+        
+        if isinstance(node, (NumberNode, ErrorNode)):
+            return node
+        
+        if isinstance(node, CellRefNode):
+            indices = calc.cell_name_to_indices(node.cell_name)
+            if not indices: 
+                return node
+            r, c = indices
+            if r >= table.rowCount() or c >= table.columnCount():
+                return ErrorNode("#REF!")
+            return node
+        
+        if isinstance(node, RangeRefNode):
+            start_idx = calc.cell_name_to_indices(node.start_cell)
+            end_idx = calc.cell_name_to_indices(node.end_cell)
+            if not start_idx or not end_idx:
+                return node
+            r1, c1 = start_idx
+            r2, c2 = end_idx
+            if r1 >= table.rowCount() or c1 >= table.columnCount() or r2 >= table.rowCount() or c2 >= table.columnCount():
+                return ErrorNode("#REF!")
+            return node
+        
+        if isinstance(node, UnaryOpNode):
+            return UnaryOpNode(node.op, self._check_bounds_after_delete(node.operand, dim, table, calc))
+        
+        if isinstance(node, BinaryOpNode):
+            return BinaryOpNode(
+                self._check_bounds_after_delete(node.left, dim, table, calc),
+                node.op,
+                self._check_bounds_after_delete(node.right, dim, table, calc)
+            )
+        
+        if isinstance(node, FunctionNode):
+            new_args = [self._check_bounds_after_delete(arg, dim, table, calc) for arg in node.args]
+            return FunctionNode(node.func_name, new_args)
+        
+        return node 
                         
     def _transform_ast_on_delete(self, node: ASTNode, dim: str, idx: int, calc: FormulaCalculator) -> ASTNode:
         

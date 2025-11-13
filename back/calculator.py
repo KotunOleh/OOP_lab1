@@ -73,9 +73,10 @@ class FormulaCalculator:
                 visited.discard(cell)
                 raise ReferenceError("#NAME?")
             r, c = indices
+            # If referenced cell is outside the current table bounds -> REF error
             if r >= table_widget.rowCount() or c >= table_widget.columnCount():
                 visited.discard(cell)
-                return 0.0
+                raise ReferenceError("#REF!")
 
             item = table_widget.item(r, c)
             if not item or not item.text():
@@ -113,7 +114,10 @@ class FormulaCalculator:
                     cell_name = get_column_letter(cc + 1) + str(rr + 1)
                     try:
                         val = self._evaluate_ast(CellRefNode(cell_name), table_widget, visited)
-                    except ReferenceError:
+                    except ReferenceError as e:
+                        msg = str(e)
+                        if msg.startswith("#REF"):
+                            raise
                         continue
                     values.append(val)
             return values
