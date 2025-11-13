@@ -111,7 +111,6 @@ class FormulaCalculator:
             for rr in range(min_r, max_r + 1):
                 for cc in range(min_c, max_c + 1):
                     cell_name = get_column_letter(cc + 1) + str(rr + 1)
-                    # Evaluate each cell via CellRefNode to reuse cycle detection
                     try:
                         val = self._evaluate_ast(CellRefNode(cell_name), table_widget, visited)
                     except ReferenceError:
@@ -143,6 +142,8 @@ class FormulaCalculator:
                         raise ReferenceError("#DIV/0!")
                     return left / right
                 if op == '^':
+                    if left == 0 and right == 0:
+                        raise ReferenceError("#NUM!")
                     return left ** right
             except ReferenceError:
                 raise
@@ -225,11 +226,9 @@ class FormulaCalculator:
     def parse_and_calculate(self, formula_string: str, table_widget: any) -> str:
         if not formula_string.startswith("="):
             return formula_string
-        # Use AST-evaluation so we can detect circular references
         try:
             ast = self._get_ast(formula_string)
             if isinstance(ast, ErrorNode):
-                # parser returned an error node
                 return ast.error_code if hasattr(ast, 'error_code') else "#ERROR!"
 
             try:
@@ -237,10 +236,7 @@ class FormulaCalculator:
             except CircularReferenceError:
                 return "#CIRCULAR!"
             except ReferenceError as re_err:
-                # ReferenceError instances are raised with an error code message
                 return str(re_err)
-
-            # If evaluation returned a list (range), convert to string sensibly
             if isinstance(value, list):
                 return str(value)
             return str(value)
