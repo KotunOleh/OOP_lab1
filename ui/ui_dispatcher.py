@@ -58,9 +58,9 @@ class UIRenderer:
 
         # TABLE context menu
         self._add_action(None, "add_row", "Додати рядок", trigger_slot=self.window.add_row)
-        self._add_action(None, "del_row", "Видалити поточний рядок", trigger_slot=self.window.delete_row)
+        self._add_action(None, "del_row", "Видалити рядок", trigger_slot=self.window.delete_row)
         self._add_action(None, "add_col", "Додати стовпець", trigger_slot=self.window.add_column)
-        self._add_action(None, "del_col", "Видалити поточний стовпець", trigger_slot=self.window.delete_column)
+        self._add_action(None, "del_col", "Видалити стовпець", trigger_slot=self.window.delete_column)
 
     def _add_action(self, parent_widget, name, text, tooltip=None, shortcut=None, 
                     icon=None, trigger_slot=None, enabled=True, checkable=False) -> QAction:
