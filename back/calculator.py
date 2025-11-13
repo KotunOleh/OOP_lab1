@@ -1,9 +1,44 @@
 import re
 from openpyxl.utils import column_index_from_string, get_column_letter
+from PySide6.QtCore import Qt
+from back.parser import Parser, ErrorNode, ParsingError, CircularReferenceError, ReferenceError, ASTNode, NumberNode, CellRefNode, RangeRefNode, BinaryOpNode, FunctionNode, UnaryOpNode
 
 class FormulaCalculator:
     def __init__(self):
         self._cell_name_cache = {}
+        self._ast_cache: dict[str, object] = {}
+
+    def clear_caches(self) -> None:
+        try:
+            self._cell_name_cache.clear()
+        except Exception:
+            pass
+        try:
+            self._ast_cache.clear()
+        except Exception:
+            pass
+
+    def _get_ast(self, formula_string: str):
+        if not isinstance(formula_string, str):
+            return ErrorNode("#ERROR!")
+
+        cached = self._ast_cache.get(formula_string)
+        if cached is not None:
+            return cached
+
+        try:
+            parser = Parser()
+            ast = parser.parse(formula_string)
+        except ParsingError:
+            ast = ErrorNode("#ERROR!")
+        except Exception:
+            ast = ErrorNode("#ERROR!")
+
+        try:
+            self._ast_cache[formula_string] = ast
+        except Exception:
+            pass
+        return ast
 
     @staticmethod
     def _excel_max(*args) -> float | int:
@@ -17,6 +52,127 @@ class FormulaCalculator:
         try: return min(args)
         except TypeError: return 0
 
+    def _evaluate_ast(self, node: ASTNode, table_widget: any, visited: set[str] | None = None):
+        if visited is None:
+            visited = set()
+
+        if isinstance(node, NumberNode):
+            return node.value
+        
+        if isinstance(node, ErrorNode):
+            raise ReferenceError(node.error_code)
+
+        if isinstance(node, CellRefNode):
+            cell = node.cell_name.upper()
+            if cell in visited:
+                raise CircularReferenceError(f"Circular reference detected at {cell}")
+            visited.add(cell)
+
+            indices = self.cell_name_to_indices(cell)
+            if not indices:
+                visited.discard(cell)
+                raise ReferenceError("#NAME?")
+            r, c = indices
+            if r >= table_widget.rowCount() or c >= table_widget.columnCount():
+                visited.discard(cell)
+                return 0.0
+
+            item = table_widget.item(r, c)
+            if not item or not item.text():
+                visited.discard(cell)
+                return 0.0
+
+            formula = item.data(Qt.ItemDataRole.UserRole) if hasattr(item, 'data') else None
+            if formula and isinstance(formula, str) and formula.startswith("="):
+                ast = self._get_ast(formula)
+                value = self._evaluate_ast(ast, table_widget, visited)
+                visited.discard(cell)
+                return value
+
+            try:
+                val = float(item.text())
+            except Exception:
+                val = 0.0
+            visited.discard(cell)
+            return val
+
+        if isinstance(node, RangeRefNode):
+            start = node.start_cell
+            end = node.end_cell
+            start_idx = self.cell_name_to_indices(start)
+            end_idx = self.cell_name_to_indices(end)
+            if not start_idx or not end_idx:
+                raise ReferenceError("#NAME?")
+            r1, c1 = start_idx
+            r2, c2 = end_idx
+            min_r, max_r = min(r1, r2), max(r1, r2)
+            min_c, max_c = min(c1, c2), max(c1, c2)
+            values = []
+            for rr in range(min_r, max_r + 1):
+                for cc in range(min_c, max_c + 1):
+                    cell_name = get_column_letter(cc + 1) + str(rr + 1)
+                    # Evaluate each cell via CellRefNode to reuse cycle detection
+                    try:
+                        val = self._evaluate_ast(CellRefNode(cell_name), table_widget, visited)
+                    except ReferenceError:
+                        continue
+                    values.append(val)
+            return values
+
+        # Unary op
+        if isinstance(node, UnaryOpNode):
+            val = self._evaluate_ast(node.operand, table_widget, visited)
+            if node.op == '-':
+                return -val
+            return val
+
+        # Binary op
+        if isinstance(node, BinaryOpNode):
+            left = self._evaluate_ast(node.left, table_widget, visited)
+            right = self._evaluate_ast(node.right, table_widget, visited)
+            op = node.op
+            try:
+                if op == '+':
+                    return left + right
+                if op == '-':
+                    return left - right
+                if op == '*':
+                    return left * right
+                if op == '/':
+                    if right == 0:
+                        raise ReferenceError("#DIV/0!")
+                    return left / right
+                if op == '^':
+                    return left ** right
+            except ReferenceError:
+                raise
+            except Exception:
+                raise ReferenceError("#ERROR!")
+
+        if isinstance(node, FunctionNode):
+            func = node.func_name.upper()
+            args_values = []
+            for arg in node.args:
+                val = self._evaluate_ast(arg, table_widget, visited)
+                if isinstance(val, list):
+                    args_values.extend(val)
+                else:
+                    args_values.append(val)
+
+            nums = [v for v in args_values if isinstance(v, (int, float))]
+            try:
+                if func == 'SUM':
+                    return sum(nums)
+                if func == 'AVERAGE':
+                    return sum(nums) / len(nums) if nums else 0
+                if func == 'MAX':
+                    return max(nums) if nums else 0
+                if func == 'MIN':
+                    return min(nums) if nums else 0
+            except Exception:
+                raise ReferenceError("#ERROR!")
+
+        raise ReferenceError("#ERROR!")
     def cell_name_to_indices(self, cell_name: str) -> tuple[int, int] | None:
         if cell_name in self._cell_name_cache:
             return self._cell_name_cache[cell_name]
@@ -69,55 +225,24 @@ class FormulaCalculator:
     def parse_and_calculate(self, formula_string: str, table_widget: any) -> str:
         if not formula_string.startswith("="):
             return formula_string
-        expression = formula_string[1:].upper()
+        # Use AST-evaluation so we can detect circular references
         try:
-            match = re.match(r"SUM\((.*?)\)", expression)
-            if match:
-                range_str = match.group(1)
-                if ":" in range_str:
-                    values = self.get_range_values(range_str, table_widget)
-                    return str(sum(values))
-            match = re.match(r"AVERAGE\((.*?)\)", expression)
-            if match:
-                range_str = match.group(1)
-                if ":" in range_str:
-                    values = self.get_range_values(range_str, table_widget)
-                    if not values: return "0"
-                    return str(sum(values) / len(values))
-            match = re.match(r"MAX\((.*?)\)", expression)
-            if match:
-                range_str = match.group(1)
-                if ":" in range_str:
-                    values = self.get_range_values(range_str, table_widget)
-                    if not values: return "0"
-                    return str(max(values))
-            match = re.match(r"MIN\((.*?)\)", expression)
-            if match:
-                range_str = match.group(1)
-                if ":" in range_str:
-                    values = self.get_range_values(range_str, table_widget)
-                    if not values: return "0"
-                    return str(min(values))
+            ast = self._get_ast(formula_string)
+            if isinstance(ast, ErrorNode):
+                # parser returned an error node
+                return ast.error_code if hasattr(ast, 'error_code') else "#ERROR!"
 
-            cell_names = re.findall(r"([A-Z]+[0-9]+)", expression)
-            eval_expression = expression
-            for cell_name in set(cell_names):
-                value = self.get_cell_value(cell_name, table_widget)
-                eval_expression = re.sub(r"\b" + cell_name + r"\b", str(value), eval_expression)
+            try:
+                value = self._evaluate_ast(ast, table_widget)
+            except CircularReferenceError:
+                return "#CIRCULAR!"
+            except ReferenceError as re_err:
+                # ReferenceError instances are raised with an error code message
+                return str(re_err)
 
-            eval_expression = eval_expression.replace("^", "**")
-            eval_expression = eval_expression.replace("=", "==")
-            eval_expression = eval_expression.replace("!==", "!=")
-            eval_expression = eval_expression.replace("<==", "<=")
-            eval_expression = eval_expression.replace(">==", ">=")
-            eval_expression = eval_expression.replace("<>", "!=")
-
-            eval_globals = {}
-            eval_locals = {
-                "MAX": FormulaCalculator._excel_max,
-                "MIN": FormulaCalculator._excel_min,
-            }
-            result = eval(eval_expression, eval_globals, eval_locals)
-            return str(result)
-        except Exception as e:
+            # If evaluation returned a list (range), convert to string sensibly
+            if isinstance(value, list):
+                return str(value)
+            return str(value)
+        except Exception:
             return "#ERROR!"

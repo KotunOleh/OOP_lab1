@@ -5,11 +5,18 @@ from PySide6.QtCore import Qt, QPoint
 from openpyxl.utils import get_column_letter
 
 from utils.config import DEFAULT_ROWS, DEFAULT_COLS
+from back.parser import (
+    ASTNode, NumberNode, CellRefNode, RangeRefNode, BinaryOpNode, 
+    FunctionNode, UnaryOpNode, ErrorNode, ParsingError,
+    CircularReferenceError, ReferenceError
+)
+from back.calculator import FormulaCalculator
+
 
 class SheetWorker:
     def __init__(self, tab_widget: QTabWidget, main_window):
         self.tab_widget = tab_widget
-        self.main_window = main_window
+        self.main_window = main_window 
         self._setup_signals()
 
     def _setup_signals(self):
@@ -33,7 +40,7 @@ class SheetWorker:
 
     def add_sheet_tab(self, sheet_name: str, sheet_data = None) -> QTableWidget:
         table_widget = self.create_new_table_widget()
-        self.populate_table(table_widget, sheet_data) # sheet_data може бути аркушем openpyxl
+        self.populate_table(table_widget, sheet_data)
         index = self.tab_widget.addTab(table_widget, sheet_name)
         self.tab_widget.setCurrentIndex(index)
         self.update_column_headers(table_widget)
@@ -51,10 +58,6 @@ class SheetWorker:
         return table_widget
     
     def add_new_sheet_action(self):
-        """
-        Створює новий аркуш, як у 'main_window.py'.
-        """
-        # Перевіряємо, чи є активна книга
         if not self.main_window.current_workbook:
             QMessageBox.warning(self.main_window, "Помилка", "Спочатку створіть або відкрийте файл.")
             return
@@ -66,10 +69,7 @@ class SheetWorker:
                 QMessageBox.warning(self.main_window, "Помилка", "Аркуш з таким іменем вже існує.")
                 return
             
-            # Створюємо аркуш в openpyxl
             new_sheet = self.main_window.current_workbook.create_sheet(title=sheet_name)
-            
-            # Створюємо та додаємо вкладку з порожньою таблицею
             self.add_sheet_tab(sheet_name) 
             self.main_window.set_dirty(True)
 
@@ -117,37 +117,129 @@ class SheetWorker:
     def add_row(self) -> None:
         table_widget = self.get_current_table()
         if not table_widget: return
-        current_row = table_widget.currentRow()
-        if current_row < 0: current_row = table_widget.rowCount()
+        current_row = table_widget.rowCount()
         table_widget.insertRow(current_row)
+        self.main_window.set_dirty(True)
+        
+    def add_column(self) -> None:
+        table_widget = self.get_current_table()
+        if not table_widget: return
+        current_col = table_widget.columnCount()
+        table_widget.insertColumn(current_col)
+        self.update_column_headers(table_widget)
         self.main_window.set_dirty(True)
 
     def delete_row(self) -> None:
         table_widget = self.get_current_table()
         if not table_widget: return
-        current_row = table_widget.currentRow()
-        if current_row >= 0: 
-            table_widget.removeRow(current_row)
-            self.main_window.set_dirty(True)
-
-    def add_column(self) -> None:
-        table_widget = self.get_current_table()
-        if not table_widget: return
-        current_col = table_widget.currentColumn()
-        if current_col < 0: current_col = table_widget.columnCount()
-        table_widget.insertColumn(current_col)
-        self.update_column_headers(table_widget)
+        
+        row_count = table_widget.rowCount()
+        if row_count <= 0: return
+            
+        last_row_index = row_count - 1
+        
+        self.update_formulas_on_delete('row', last_row_index)
+        table_widget.removeRow(last_row_index)
         self.main_window.set_dirty(True)
+        self.main_window.recalculate_all_cells()
 
     def delete_column(self) -> None:
         table_widget = self.get_current_table()
         if not table_widget: return
-        current_col = table_widget.currentColumn()
-        if current_col >= 0:
-            table_widget.removeColumn(current_col)
-            self.update_column_headers(table_widget)
-            self.main_window.set_dirty(True)
+        
+        col_count = table_widget.columnCount()
+        if col_count <= 0: return
+
+        last_col_index = col_count - 1
+
+        
+        self.update_formulas_on_delete('col', last_col_index)
+        table_widget.removeColumn(last_col_index)
+        self.update_column_headers(table_widget)
+        self.main_window.set_dirty(True)
+        self.main_window.recalculate_all_cells()
             
+    def update_formulas_on_delete(self, dimension: str, deleted_index: int):
+        calculator = self.main_window.calculator 
+        self.main_window.calculator.clear_caches()
+
+        for tab_idx in range(self.tab_widget.count()):
+            table = self.tab_widget.widget(tab_idx)
+            for r in range(table.rowCount()):
+                for c in range(table.columnCount()):
+                    if dimension == 'row' and r == deleted_index: continue
+                    if dimension == 'col' and c == deleted_index: continue
+                        
+                    item = table.item(r, c)
+                    if not item: continue
+                    
+                    formula = item.data(Qt.ItemDataRole.UserRole)
+                    if not formula or not formula.startswith("="):
+                        continue
+                        
+                    try:
+                        ast = calculator._get_ast(formula)
+                        new_ast = self._transform_ast_on_delete(ast, dimension, deleted_index, calculator)
+                        
+                        if new_ast is ast:
+                            continue
+
+                        new_formula = "=" + new_ast.to_string()
+                        item.setData(Qt.ItemDataRole.UserRole, new_formula)
+                        
+                        if self.main_window.is_formula_view:
+                            item.setText(new_formula)
+                            
+                    except (ParsingError, ReferenceError, CircularReferenceError):
+                        continue 
+                        
+    def _transform_ast_on_delete(self, node: ASTNode, dim: str, idx: int, calc: FormulaCalculator) -> ASTNode:
+        
+        if isinstance(node, (NumberNode, ErrorNode)):
+            return node 
+        
+        if isinstance(node, CellRefNode):
+            indices = calc.cell_name_to_indices(node.cell_name)
+            if not indices: return ErrorNode("#NAME?")
+            
+            r, c = indices
+            
+            if dim == 'row' and r == idx: return ErrorNode("#REF!") 
+            if dim == 'col' and c == idx: return ErrorNode("#REF!")
+            
+            return node
+
+        if isinstance(node, RangeRefNode):
+            start_indices = calc.cell_name_to_indices(node.start_cell)
+            end_indices = calc.cell_name_to_indices(node.end_cell)
+            if not start_indices or not end_indices: return ErrorNode("#NAME?")
+
+            r1, c1 = start_indices
+            r2, c2 = end_indices
+            
+            if dim == 'row' and (r1 <= idx <= r2 or r2 <= idx <= r1):
+                return ErrorNode("#REF!")
+            if dim == 'col' and (c1 <= idx <= c2 or c2 <= idx <= c1):
+                return ErrorNode("#REF!")
+
+            return node
+
+        if isinstance(node, UnaryOpNode):
+            return UnaryOpNode(node.op, self._transform_ast_on_delete(node.operand, dim, idx, calc))
+
+        if isinstance(node, BinaryOpNode):
+            return BinaryOpNode(
+                self._transform_ast_on_delete(node.left, dim, idx, calc),
+                node.op,
+                self._transform_ast_on_delete(node.right, dim, idx, calc)
+            )
+
+        if isinstance(node, FunctionNode):
+            new_args = [self._transform_ast_on_delete(arg, dim, idx, calc) for arg in node.args]
+            return FunctionNode(node.func_name, new_args)
+
+        return node 
+    
     def update_sheet_from_table(self, sheet, table_widget):
         if sheet.max_row > 0:
             sheet.delete_rows(1, sheet.max_row)
